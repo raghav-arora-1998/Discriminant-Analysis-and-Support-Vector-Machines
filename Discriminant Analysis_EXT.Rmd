@@ -1,0 +1,74 @@
+---
+title: ""
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidymodels)
+library(tidyverse)
+library(ggplot2)
+library(MASS)
+library(discrim)
+```
+
+```{r}
+zoo <- read_csv("https://www.dropbox.com/s/kg89g2y3tp6p9yh/zoo_final.csv?dl=1")
+```
+
+***LDA***
+
+```{r}
+zoo2 <- zoo[-c(2,4,6)]
+zoo2$Class_Type <- as.factor(zoo2$Class_Type)
+
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+lda_fit <- lda_mod %>%
+  fit(Class_Type ~.,data = zoo2)
+
+  preds <- lda_fit %>% 
+      predict(zoo2)
+
+  zoo2 <- zoo2 %>%
+    mutate(
+      pred_zoo = preds$.pred_class
+    )
+
+  zoo2 %>%
+    accuracy(truth = Class_Type,
+             estimate = pred_zoo)
+```
+  
+***SVM***
+
+```{r}
+svm_spec <- svm_poly(cost = 0.25, degree = 2) %>%
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+svm_fit <- svm_spec %>%
+  fit(Class_Type ~ ., data = zoo2)
+
+zoo2 <- zoo2 %>%
+  mutate(
+    pred_zoo_4 = predict(svm_fit,
+                      new_data = zoo2,
+                      type = "raw"))
+zoo2 %>%
+    accuracy(truth = Class_Type,
+             estimate = pred_zoo_4)
+```
+- The regular models here seem to have a better accuracy than LDA and SVM models in the lab. However, no cross-validation was performed on the models here because it constantly gave errors. This is probably because of variables being correlated making them unsuitable predictor variables. 
+ 
+

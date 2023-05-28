@@ -1,0 +1,419 @@
+---
+title: ""
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyselect)
+library(tidymodels)
+library(ggplot2)
+library(discrim)
+library(recipes)
+library(mlbench)
+```
+
+# Discriminant Analysis and Support Vector Machines
+
+## Instructions
+
+You will submit an HTML document to Canvas as your final version.
+
+You may work with one other person for this assignment. Make sure both
+your names are on the HTML document, and you should both upload a copy
+of the assignment to Canvas.
+
+Your document should show your code chunks/cells as well as any output.
+Make sure that only relevant output is printed. Do not, for example,
+print the entire dataset in your final knitted file.
+
+Your document should also be clearly organized, so that it is easy for a reader to find your answers to each question.
+
+There may be a small penalty for submissions that are difficult to read
+or navigate.
+
+## Dataset: Zoo animals
+
+This week's dataset contains information about animals commonly found at a zoo. The data contains dummy variables for several features that an animal might have, such as:
+
+Is the animal a predator? Does the animal produce milk? Is the animal
+aquatic? There is also one quantitative variable, legs stating how many
+legs the animal has.
+
+Run the following code to read the data:
+
+```{r}
+zoo <- read_csv("https://www.dropbox.com/s/kg89g2y3tp6p9yh/zoo_final.csv?dl=1") 
+```
+
+## Part One: PCA preprocessing
+
+### Q1: PCA
+
+Below are the results of a PCA transformation of the data, with the
+non-dummy categorical variables removed removed. This shows the
+rotations for the first three PCs. Interpret the results - which
+variables are most important in spreading the observations? What do each of the first three PCs seem to represent?
+
+```{r}
+##                   PC1         PC2         PC3
+## hair     -0.105585831  0.38073598 -0.09725382
+## feathers  0.041574511 -0.17518616 -0.36315088
+## eggs      0.064480975 -0.43910323  0.03568660
+## milk     -0.062292761  0.44962528 -0.05531073
+## airborne -0.008309226 -0.21363144 -0.38359657
+## aquatic   0.094520646 -0.12172374  0.43441572
+## predator  0.028764647  0.01215395  0.41586206
+## toothed   0.041180336  0.40140542  0.21937528
+## backbone  0.077587066  0.22450177 -0.14271590
+## breathes -0.080155281  0.11011203 -0.38173733
+## venomous -0.002117142 -0.05018278  0.07080822
+## fins      0.113910026  0.03025333  0.24792931
+## legs     -0.967377908 -0.08115149  0.10446504
+## tail      0.074713579  0.18205017 -0.18875383
+## domestic -0.015625507  0.03790715 -0.13169846
+## catsize  -0.022083876  0.31705241  0.03067264
+```
+
+- The PC's are vectors represent the direction of variation of the data. The variables explain variation captured by each of the PC's for different features of each of the animal name present in the dataset. For the PC1, the most important features are legs, fins and hair. For PC2, the most important features are milk, eggs and toothed. For PC3, the most important features are aquatic, predator and airborne
+
+### Q2: Choosing PCs
+
+Look at the percent of variance explained by each PC. How many PCs would you choose to include in a model for predicting species from animal features? Why?
+
+```{r}
+##  [1] 0.6288151366 0.1435312995 0.0729556109 0.0391740756 0.0244446038
+##  [6] 0.0213281612 0.0149124424 0.0124983870 0.0103489380 0.0096347615
+## [11] 0.0080554590 0.0054063100 0.0042702391 0.0030127849 0.0011080962
+## [16] 0.0005036944
+
+(0.6288151366 +0.1435312995 +0.0729556109+ 0.0391740756 +0.0244446038)
+```
+
+-   We would choose the first 5 PC's to include in a model since that
+    explains 90% of variation in the data.
+
+### Q3: New dataset
+
+Since PCA is a data processing tool, we can instead apply it as part of
+a step\_ function in tidymodels.
+
+The step_pca() addition to your recipe will automatically include the
+PCA process in your data pipeline.
+
+Adjust the code below to complete this recipe:
+
+```{r}
+zoo_rec <- recipe(Class_Type ~ ., data = zoo) %>% 
+  step_pca(all_numeric(), threshold = 0.8, 
+           options = c(center = TRUE))
+```
+
+The prep() step is then used to prepare by computing the PCs, and the
+bake() function is then used to make a new dataframe with the chosen PCs as columns.
+
+```{r}
+zoo_trained <- zoo_rec %>% prep(zoo)
+zoo_pcs <- zoo_trained %>% bake(zoo)
+```
+
+### Q4: Explore
+
+To verify that the above process worked, plot your observations in the
+first two PC dimensions, colored by the animal species.
+
+```{r}
+zoo_pcs %>% 
+  ggplot(aes(x= PC1 , y=PC2 , color = animal_name)) +
+  geom_point()
+```
+
+Then plot your observations in PC2 and PC3, colored by animal type.
+
+```{r}
+zoo_pcs %>% 
+  ggplot(aes(x= PC2 , y=PC3 , color = Class_Type)) +
+  geom_point()
+```
+
+Comment on the plots. Why are certain animal types grouped the way that
+they are?
+
+-   Certain animal types are grouped as such as they have different
+    characteristics which is what determines the PC's. For example, all
+    the fish have fins and are thus categorized on the plot in a
+    specific area. 
+    
+## Part Two: LDA
+
+Hint: In the following, we are trying to predict the "type" of animal,
+not the specific animal species. The update_role() addition to your
+recipe should be used so that the models don't use the species variable
+in the classification process.
+
+```{r}
+zoo_pcs <- zoo_pcs %>% 
+  select(2:5)
+```
+
+### Q1: Linear
+
+Create a Linear Discriminant that classifies animal type based on the
+first three PCs.
+
+```{r}
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+# recipe
+lda_rec <- recipe(Class_Type ~ PC1 + PC2 + PC3, data = zoo_pcs)
+
+# workflow
+lda_wflow <- workflow() %>%
+  add_recipe(lda_rec) %>%
+  add_model(lda_mod)
+
+# cross validation
+zoo_pcs_cv <- vfold_cv(zoo_pcs, v = 10)
+
+# fit
+lda_cv_fit <- lda_wflow %>%
+  fit_resamples(resamples = zoo_pcs_cv)
+
+# metrics
+lda_cv_fit %>% collect_metrics()
+```
+
+Report appropriate metrics of your classifier.
+
+-   We have used accuracy and roc_auc as our metrics.
+
+### Q2: Quadratic
+
+Create a Linear Discriminant that classifies animal type based on the
+first three PCs.
+
+```{r}
+qda_mod <- discrim_regularized(frac_common_cov = 0) %>% 
+             set_engine('klaR') %>% 
+             set_mode('classification')
+
+# recipe
+qda_rec <- recipe(Class_Type ~ PC1 + PC2 + PC3, data = zoo_pcs)
+
+# workflow
+qda_wflow <- workflow() %>%
+  add_recipe(qda_rec) %>%
+  add_model(qda_mod)
+
+# cross validation
+zoo_pcs_cv <- vfold_cv(zoo_pcs, v = 10)
+
+# fit
+qda_cv_fit <- qda_wflow %>%
+  fit_resamples(resamples = zoo_pcs_cv)
+
+# metrics
+qda_cv_fit %>% collect_metrics()
+```
+
+Report appropriate metrics of your classifier.
+
+-   We have used accuracy and roc_auc as our metrics.
+
+### Q3: Interpretation
+
+Which classifier did better?
+
+-   QDA performed better than LDA
+
+Intuitively, why do you think that is?
+
+-   This is because QDA fits the data better and provides more
+    flexibility when splitting categories into different areas. Since
+    there are a lot of classifications required in different areas of
+    the plot using a QDA should be better.
+
+## Part Three: SVM
+
+```{r}
+roc_vals <- metric_set(roc_auc)
+ctrl <- control_grid(verbose = FALSE, save_pred = TRUE)
+```
+
+### Q1: Linear
+
+Create a Support Vector Classifier (aka, an SVM with no kernel) that
+classifies animal type based on the first three PCs. You should tune the cost parameter.
+
+```{r}
+svm_specs <- svm_linear(cost = tune()) %>%
+  set_mode("classification") %>% 
+  set_engine("kernlab")
+
+svm_rec <- recipe(Class_Type ~ PC1 + PC2 + PC3, data = zoo_pcs)
+
+svm_grid <- expand.grid(cost = c(0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2))
+
+ svm_wflow <- workflow() %>%
+   add_model(svm_specs) %>%
+   add_recipe(svm_rec)
+ 
+ svm_results <-  svm_wflow %>%
+  tune_grid(resamples = zoo_pcs_cv,
+            grid = svm_grid)
+
+svm_results %>%
+  collect_metrics() %>%
+  arrange(desc(mean))
+```
+
+Report appropriate metrics of your classifier.
+
+```{r}
+svm_specs1 <- svm_linear(cost = 0.25) %>%
+  set_mode("classification") %>% 
+  set_engine("kernlab")
+
+svm_wflow1 <- workflow() %>% 
+  add_model(svm_specs1) %>% 
+  add_recipe(svm_rec)
+
+my_svm1 <- svm_wflow1 %>%
+  fit_resamples(zoo_pcs_cv)
+
+my_svm1 %>% collect_metrics()
+```
+
+### Q2: SVM
+
+Repeat Q1, this time for a full Support Vector Machine with a polynomial
+kernel.
+
+(You may use the same cost you chose in Q1, but you should tune the
+degree.)
+
+```{r}
+svm_specs2 <- svm_poly(cost = 0.25, degree = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_degree_grid <- expand.grid(degree = c(1, 2, 3, 4))
+
+svm_wflow2 <- workflow() %>%
+  add_model(svm_specs2) %>%
+  add_recipe(svm_rec)
+
+svm_results <-  svm_wflow2 %>%
+  tune_grid(resamples = zoo_pcs_cv,
+            grid = svm_degree_grid)
+
+svm_results %>%
+  collect_metrics() %>%
+  arrange(desc(mean))
+```
+
+```{r}
+svm_specs <- svm_poly(cost = 0.25, degree = 2) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_wflow <- workflow() %>% 
+  add_model(svm_specs) %>% 
+  add_recipe(svm_rec)
+
+my_svm <- svm_wflow %>%
+  fit_resamples(zoo_pcs_cv)
+
+my_svm %>% collect_metrics()
+```
+
+### Q3: Interpretation
+
+Explain intuitively why your polynomial SVM had better accuracy than
+your ordinary linear one.
+
+- Polynomial SVM had better accuracy than your ordinary linear one because polynomial SVM allows more flexibility and fits the data better
+
+## Part Four: Prediction
+
+How would your models classify a human being?
+
+Alter the code below to make a dataset with one observation,
+representing a human. Use your best LDA or QDA model, and your best SVC
+or SVM model, to predict the species of a human.
+
+Instead of finding only the first predicted type, show the probabilities of each category. (Recall: the type = "prob" option in the predict() function)
+
+(Hint: the catsize variable means "bigger than a cat")
+
+```{r}
+human <- data.frame(
+  animal_name = "human",
+  hair = 1,
+  feathers = 0,
+  eggs = 0,
+  milk = 1, 
+  airborne = 0,
+  aquatic = 0,
+  predator = 1,
+  toothed = 1,
+  backbone = 1,
+  breathes = 1,
+  venomous = 0,
+  fins = 0,
+  legs = 2,
+  tail = 0,
+  domestic = 0,
+  catsize = 1
+)
+```
+
+### QDA
+
+```{r}
+human_rec <- recipe(Class_Type ~ hair + feathers + eggs + milk + airborne + aquatic + predator + toothed + backbone + breathes + venomous + fins + legs + tail + domestic + catsize, data = zoo) %>% 
+  step_pca(all_numeric(), threshold = 0.9,
+           options = c(center =TRUE))
+
+qda_wflow2 <- workflow() %>%
+  add_recipe(human_rec) %>%
+  add_model(qda_mod)
+
+qda_fit <- qda_wflow2 %>%
+  fit(zoo)
+
+predict(qda_fit, new_data = human, type = "prob")
+```
+
+### SVM 
+
+```{r}
+svm_specs <- svm_poly(cost = 0.25, degree = 2) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_wflow <- workflow() %>% 
+  add_recipe(human_rec) %>% 
+  add_model(svm_specs)
+
+my_svm <- svm_wflow %>%
+  fit(zoo)
+
+predict(my_svm, new_data = human, type = "prob")
+```
+
+- Both models predict humans as mammals.
+
